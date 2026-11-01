@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Netzbetreiber Karte</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Karte fuellt den Bildschirm, Bedienung liegt als ruhige Tafel darueber */
+:root {
+  --ink: #17242b;
+  --muted: #5b6b73;
+  --line: #d5dde0;
+  --panel: #ffffff;
+  --accent: #0b6e7f;
+  --warn-bg: #fff3d6;
+  --warn-ink: #7a5200;
+  --font: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; font: 14px/1.4 var(--font); color: var(--ink); background: #e8edef; }
+#map { position: fixed; inset: 0; background: #e8edef; }
+.leaflet-container { font: inherit; }
+
+.panel {
+  position: fixed; z-index: 1000; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 10px rgba(23,36,43,.14);
+}
+#layers {
+  top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right));
+  padding: 10px 12px; width: 220px;
+}
+#layers h1 { font-size: 15px; margin: 0 0 2px; }
+#layers .sub { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+#layers label { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
+#layers input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+#layers .range { display: flex; flex-direction: column; gap: 2px; padding-top: 6px; border-top: 1px solid var(--line); margin-top: 6px; font-size: 12px; color: var(--muted); }
+#layers input[type=range] { width: 100%; height: 18px; }
+#toggle { display: none; }
+#status { font-size: 12px; color: var(--muted); padding-top: 6px; }
+#sources { font-size: 10.5px; line-height: 1.3; color: var(--muted); padding-top: 6px; }
+
+#card {
+  left: max(12px, env(safe-area-inset-left)); bottom: max(26px, env(safe-area-inset-bottom));
+  width: 370px; max-width: calc(100vw - 24px); max-height: calc(100% - 60px); overflow-y: auto; padding: 12px 14px;
+}
+#card.pinned { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 2px 10px rgba(23,36,43,.18); }
+#card h2 { font-size: 16px; margin: 0 28px 2px 0; line-height: 1.25; }
+#card .parent { color: var(--muted); font-size: 13px; }
+#card dl { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 8px; margin: 10px 0 0; }
+#card dt { color: var(--muted); font-size: 12px; padding-top: 1px; }
+#card dd { margin: 0; overflow-wrap: anywhere; }
+#card a { color: var(--accent); }
+#card .place { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; font-size: 13px; }
+#card .note { background: var(--warn-bg); color: var(--warn-ink); border-radius: 5px; padding: 5px 8px; margin-top: 6px; font-size: 12px; }
+#card .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+#close { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border: 0; background: none; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; border-radius: 4px; }
+#close:focus-visible, #toggle:focus-visible { outline: 2px solid var(--accent); }
+#about { font-size: 11px; color: var(--muted); margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
+#about a { color: var(--muted); }
+.kreis-label, .land-label { background: none; border: 0; box-shadow: none; color: var(--ink); font-weight: 600; font-size: 11px; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; padding: 0; }
+.kreis-label::before, .land-label::before { display: none; }
+.land-label { font-size: 13px; }
+
+#suche {
+  top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left));
+  width: 340px; max-width: calc(100vw - 110px); z-index: 1001; display: flex; flex-wrap: wrap; align-items: stretch;
+}
+#q { flex: 1 1 0; min-width: 0; height: 40px; border: 0; background: none; padding: 0 4px 0 12px; font: inherit; font-size: 16px; color: var(--ink); border-radius: 8px 0 0 8px; }
+#q:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+#los { flex: none; width: 42px; height: 40px; border: 0; background: none; color: var(--accent); cursor: pointer; display: grid; place-items: center; border-radius: 0 8px 8px 0; }
+#los:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#los[aria-busy="true"] { opacity: .4; cursor: progress; }
+#treffer { flex: 1 0 100%; max-height: 50vh; overflow-y: auto; border-top: 1px solid var(--line); padding: 4px; }
+.treffer { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 6px 8px; font: inherit; color: var(--ink); cursor: pointer; border-radius: 5px; }
+.treffer:hover, .treffer.aktiv, .treffer:focus-visible { background: #e6f1f3; outline: none; }
+.treffer small { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.treffer.adresse { color: var(--accent); font-weight: 600; }
+#meldung { flex: 1 0 100%; border-top: 1px solid var(--line); padding: 7px 12px; font-size: 13px; color: var(--warn-ink); background: var(--warn-bg); border-radius: 0 0 8px 8px; }
+.pin { filter: drop-shadow(0 2px 2px rgba(0,0,0,.45)); }
+#card .adresse-zeile { margin-bottom: 4px; overflow-wrap: anywhere; }
+#card .kreis-liste { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+#card .kreis-liste button { text-align: left; border: 0; background: none; color: var(--accent); text-decoration: underline; font: inherit; cursor: pointer; padding: 3px 0; }
+
+@media (max-width: 640px) {
+  #suche { width: auto; right: 96px; max-width: none; }
+  #layers.open { z-index: 1002; }
+  #layers { width: auto; padding: 6px 10px; }
+  #layers h1, #layers .sub { display: none; }
+  #toggle { display: block; background: none; border: 0; font: inherit; font-weight: 600; color: var(--ink); padding: 6px 2px; min-height: 36px; cursor: pointer; }
+  #layers .body { display: none; width: 200px; }
+  #layers.open .body { display: block; }
+  #layers label { padding: 8px 0; }
+  #card { left: 0; right: 0; bottom: 0; width: 100%; max-width: 100%; max-height: 58%; border-radius: 12px 12px 0 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+  .leaflet-control-attribution { font-size: 9px; }
+}
+</style>
+</head>
+<body>
+<div id="map" role="application" aria-label="Karte der Stromnetzbetreiber in Deutschland"></div>
+
+<form id="suche" class="panel" role="search" autocomplete="off">
+  <input id="q" type="search" aria-label="Adresse, Kreis oder Netzbetreiber suchen" placeholder="Adresse, Kreis, Betreiber" enterkeyhint="search">
+  <button id="los" type="submit" aria-label="Suchen"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="7.5" cy="7.5" r="5.5"/><path d="M12 12l4.5 4.5"/></svg></button>
+  <div id="treffer" hidden></div>
+  <div id="meldung" role="status" hidden></div>
+</form>
+
+<section id="layers" class="panel" aria-label="Ebenen">
+  <button id="toggle" type="button" aria-expanded="false">Ebenen</button>
+  <div class="body">
+    <h1>Netzbetreiber Strom</h1>
+    <div class="sub">Niederspannung, Näherung je Gemeinde</div>
+    <label><input type="checkbox" id="l-netz" checked> Verteilnetzbetreiber</label>
+    <label><input type="checkbox" id="l-land" checked> Bundesländer</label>
+    <label><input type="checkbox" id="l-kreis"> Kreise</label>
+    <label><input type="checkbox" id="l-sat"> Satellitenbild</label>
+    <div class="range"><label for="opacity" style="padding:0">Deckkraft der Netzgebiete</label><input type="range" id="opacity" min="10" max="90" value="50"></div>
+    <div id="status">Lade Daten …</div>
+    <div id="sources">Quellen: Marktstammdatenregister © Bundesnetzagentur (dl-de/by-2-0), bearbeitet, Stand <span id="stand"></span>. © EuroGeographics bezüglich der Verwaltungsgrenzen. Karte © OpenStreetMap-Mitwirkende. Adresssuche über OpenStreetMap Nominatim, gesuchte Adressen werden dorthin gesendet. Keine Gewähr, nicht adressgenau.</div>
+  </div>
+</section>
+
+<aside id="card" class="panel" aria-live="polite" hidden></aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="data/betreiber.js"></script>
+<script src="data/gemeinden.js"></script>
+<script src="data/gebiete.js"></script>
+<script src="data/kreise.js"></script>
+<script src="data/laender.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
