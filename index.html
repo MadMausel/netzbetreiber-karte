@@ -81,6 +81,24 @@ html, body { height: 100%; margin: 0; font: 14px/1.4 var(--font); color: var(--i
 #card .adresse-zeile { margin-bottom: 4px; overflow-wrap: anywhere; }
 #card .kreis-liste { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
 #card .kreis-liste button { text-align: left; border: 0; background: none; color: var(--accent); text-decoration: underline; font: inherit; cursor: pointer; padding: 3px 0; }
+#layers .wahl { display: flex; flex-direction: column; gap: 3px; padding-top: 6px; border-top: 1px solid var(--line); margin-top: 6px; font-size: 12px; color: var(--muted); }
+#faerbung { width: 100%; height: 32px; font: inherit; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 5px; }
+#legende { top: calc(max(12px, env(safe-area-inset-top)) + 50px); left: max(12px, env(safe-area-inset-left)); width: 340px; max-width: calc(100vw - 24px); padding: 7px 10px; font-size: 12px; z-index: 999; }
+#legende strong { display: block; font-size: 12.5px; line-height: 1.25; }
+#legende .einheit { color: var(--muted); }
+#legende .skala { display: grid; grid-template-columns: repeat(5, 1fr) 54px; gap: 2px; margin-top: 5px; }
+#legende .feld { height: 10px; border-radius: 2px; }
+#legende .wert { font-size: 10.5px; color: var(--muted); line-height: 1.2; margin-top: 2px; font-variant-numeric: tabular-nums; }
+#card .preise { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; font-size: 13px; }
+#card .preise h3 { font-size: 13px; margin: 8px 0 3px; }
+#card .preise h3:first-child { margin-top: 0; }
+#card .preise table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+#card .preise th { text-align: left; font-weight: 400; color: var(--muted); padding: 2px 6px 2px 0; vertical-align: top; }
+#card .preise td { text-align: right; padding: 2px 0 2px 6px; white-space: nowrap; font-variant-numeric: tabular-nums; vertical-align: top; }
+#card .preise .quelle { color: var(--muted); font-size: 11.5px; margin-top: 3px; overflow-wrap: anywhere; }
+#card .preise .fehlt { color: var(--warn-ink); font-size: 12.5px; }
+#card .preise details { margin-top: 6px; }
+#card .preise summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 2px 0; }
 
 @media (max-width: 640px) {
   #suche { width: auto; right: 96px; max-width: none; }
@@ -91,6 +109,8 @@ html, body { height: 100%; margin: 0; font: 14px/1.4 var(--font); color: var(--i
   #layers .body { display: none; width: 200px; }
   #layers.open .body { display: block; }
   #layers label { padding: 8px 0; }
+  #faerbung { font-size: 16px; height: 38px; }
+  #legende { width: auto; right: max(12px, env(safe-area-inset-right)); top: calc(max(12px, env(safe-area-inset-top)) + 52px); }
   #card { left: 0; right: 0; bottom: 0; width: 100%; max-width: 100%; max-height: 58%; border-radius: 12px 12px 0 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
   .leaflet-control-attribution { font-size: 9px; }
 }
@@ -115,11 +135,23 @@ html, body { height: 100%; margin: 0; font: 14px/1.4 var(--font); color: var(--i
     <label><input type="checkbox" id="l-land" checked> Bundesländer</label>
     <label><input type="checkbox" id="l-kreis"> Kreise</label>
     <label><input type="checkbox" id="l-sat"> Satellitenbild</label>
+    <div class="wahl"><label for="faerbung" style="padding:0">Gebiete färben nach</label>
+      <select id="faerbung">
+        <option value="">Betreiber (keine Preise)</option>
+        <option value="ns:2026">Netzentgelt Niederspannung 2026</option>
+        <option value="ns:2027">Netzentgelt Niederspannung 2027 (vorläufig)</option>
+        <option value="ms:2026">Netzentgelt Mittelspannung 2026</option>
+        <option value="ms:2027">Netzentgelt Mittelspannung 2027 (vorläufig)</option>
+        <option value="bkz:">Baukostenzuschuss Mittelspannung</option>
+      </select>
+    </div>
     <div class="range"><label for="opacity" style="padding:0">Deckkraft der Netzgebiete</label><input type="range" id="opacity" min="10" max="90" value="50"></div>
     <div id="status">Lade Daten …</div>
-    <div id="sources">Quellen: Marktstammdatenregister © Bundesnetzagentur (dl-de/by-2-0), bearbeitet, Stand <span id="stand"></span>. © EuroGeographics bezüglich der Verwaltungsgrenzen. Karte © OpenStreetMap-Mitwirkende. Adresssuche über OpenStreetMap Nominatim, gesuchte Adressen werden dorthin gesendet. Keine Gewähr, nicht adressgenau.</div>
+    <div id="sources">Quellen: Marktstammdatenregister © Bundesnetzagentur (dl-de/by-2-0), bearbeitet, Stand <span id="stand"></span>. © EuroGeographics bezüglich der Verwaltungsgrenzen. Karte © OpenStreetMap-Mitwirkende. Adresssuche über OpenStreetMap Nominatim, gesuchte Adressen werden dorthin gesendet. Netzentgelte und BKZ: Preisblätter der Betreiber, teils automatisch gelesen, die Quelle steht im Infofenster. Keine Gewähr, nicht adressgenau.</div>
   </div>
 </section>
+
+<section id="legende" class="panel" aria-live="polite" hidden></section>
 
 <aside id="card" class="panel" aria-live="polite" hidden></aside>
 
@@ -129,6 +161,7 @@ html, body { height: 100%; margin: 0; font: 14px/1.4 var(--font); color: var(--i
 <script src="data/gebiete.js"></script>
 <script src="data/kreise.js"></script>
 <script src="data/laender.js"></script>
+<script src="data/preise.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

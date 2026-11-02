@@ -63,7 +63,36 @@
   const gebietById = new Map();
   GEBIETE.features.forEach((f) => gebietById.set(f.properties.b, f));
 
-  const style = (f) => ({ pane: "netz", renderer: canvas, stroke: false, fillOpacity: opacity, fillColor: PALETTE[BETREIBER[f.properties.b].farbe] });
+  /* Preise: PREISE steht in derselben Reihenfolge wie BETREIBER und fehlt, solange 13_preise.py noch nicht lief */
+  const PREISE = window.PREISE || [];
+  // Pink ist guenstig, tiefes Violett teuer; die Helligkeit nimmt gleichmaessig ab, damit die Stufen auch ohne Farbsehen unterscheidbar bleiben
+  const FARBSTUFEN = ["#fbb4d4", "#ea7fc0", "#bf55b4", "#7f2f9e", "#3b0f6e"];
+  const OHNE_WERT = "#c9cfd2";
+  const HAUSHALT_KWH = 3500;
+  let faerbung = null;
+
+  function bkzMittelspannung(p) {
+    // Nur EUR/kW sind vergleichbar. Vom endgueltigen Blatt das neueste; vorlaeufige und alte Angaben zaehlen hier nicht.
+    const passend = (p.b || []).filter((z) => z.e === "MS" && z.ei === "EUR/kW" && z.p !== "vorläufig" && (!z.j || z.j >= 2024));
+    passend.sort((a, c) => (c.j || 0) - (a.j || 0));
+    return passend.length ? passend[0].w : null;
+  }
+  const MASS = {
+    ns: { titel: (j) => `Netzentgelt Niederspannung ${j}${j === "2027" ? " (vorläufig)" : ""}`, einheit: `€ im Jahr bei ${HAUSHALT_KWH.toLocaleString("de-DE")} kWh, ohne Leistungsmessung, netto`, stellen: 0,
+      wert: (p, j) => { const w = p.n && p.n[j] && p.n[j].w["NS ohne LM"]; return w ? w[0] + (HAUSHALT_KWH * w[2]) / 100 : null; } },
+    ms: { titel: (j) => `Netzentgelt Mittelspannung ${j}${j === "2027" ? " (vorläufig)" : ""}`, einheit: "Leistungspreis ab 2.500 h/a in €/kW pro Jahr, netto", stellen: 0,
+      wert: (p, j) => { const w = p.n && p.n[j] && p.n[j].w["MS >=2500h"]; return w ? w[1] : null; } },
+    bkz: { titel: () => "Baukostenzuschuss Mittelspannung", einheit: "€/kW, neuestes Preisblatt ab 2024, Angaben in kVA nicht enthalten", stellen: 0, wert: (p) => bkzMittelspannung(p) },
+  };
+
+  function farbeVon(wert) {
+    if (wert === null) return OHNE_WERT;
+    const i = faerbung.grenzen.findIndex((g) => wert <= g);
+    return FARBSTUFEN[i < 0 ? FARBSTUFEN.length - 1 : i];
+  }
+  const flaechenfarbe = (b) => (faerbung ? farbeVon(faerbung.werte.get(b) ?? null) : PALETTE[BETREIBER[b].farbe]);
+
+  const style = (f) => ({ pane: "netz", renderer: canvas, stroke: false, fillOpacity: opacity, fillColor: flaechenfarbe(f.properties.b) });
 
   const netz = L.geoJSON(GEMEINDEN, { style, onEachFeature: (f, layer) => {
     layer.on({
@@ -173,6 +202,55 @@
   map.on("zoomstart", () => { if (ausschnitt) ausschnittPane.style.visibility = "hidden"; });
   map.on("zoomend viewreset", zeichneAusschnitt);
 
+  const zahl = (x, stellen = 2) => x.toLocaleString("de-DE", { minimumFractionDigits: stellen, maximumFractionDigits: stellen });
+  const NE_REIHEN = [["NS ohne LM", "Niederspannung ohne Leistungsmessung"], ["NS <2500h", "Niederspannung unter 2.500 h/a"], ["NS >=2500h", "Niederspannung ab 2.500 h/a"],
+    ["MS/NS <2500h", "Umspannung MS/NS unter 2.500 h/a"], ["MS/NS >=2500h", "Umspannung MS/NS ab 2.500 h/a"], ["MS <2500h", "Mittelspannung unter 2.500 h/a"], ["MS >=2500h", "Mittelspannung ab 2.500 h/a"],
+    ["MSB ohne LM", "Messstellenbetrieb ohne Leistungsmessung"], ["MSB mit LM", "Messstellenbetrieb mit Leistungsmessung"]];
+
+  function quelleHtml(z) {
+    const teile = [z.p && z.p !== "nicht angegeben" ? z.p : "", z.st ? `Stand ${esc(z.st)}` : z.ga ? `gültig ab ${esc(z.ga)}` : "", `abgerufen ${esc(z.a || "unbekannt")}`, z.h ? "von Hand geprüft" : "automatisch gelesen"].filter(Boolean);
+    return `<div class="quelle">${link(z.u, "Preisblatt öffnen")} · ${teile.join(" · ")}</div>`;
+  }
+  function fehltHtml(thema, g) {
+    const [grund, url] = (g && g[thema]) || [];
+    return `<div class="fehlt">Kein Wert. ${esc(grund || "Nicht erfasst.")}${url ? ` ${link(url, "Preisblatt öffnen")}` : ""}</div>`;
+  }
+  function netzentgeltHtml(p, jahr) {
+    const n = p.n && p.n[jahr];
+    if (!n) return fehltHtml(`Netzentgelte ${jahr}`, p.g);
+    const zeilen = NE_REIHEN.filter(([k]) => n.w[k]).map(([k, name]) => {
+      const [g, l, a] = n.w[k];
+      const werte = [g !== null ? `${zahl(g)} €/a` : "", l !== null ? `${zahl(l)} €/kW·a` : "", a !== null ? `${zahl(a)} ct/kWh` : ""].filter(Boolean).join("<br>");
+      return `<tr><th scope="row">${name}</th><td>${werte}</td></tr>`;
+    }).join("");
+    return `<table>${zeilen}</table>${quelleHtml(n)}`;
+  }
+  function bkzHtml(p) {
+    const b = (p.b || []).slice().sort((a, c) => (c.j || 0) - (a.j || 0));
+    if (!b.length) return fehltHtml("BKZ", p.g);
+    const namen = { NS: "Niederspannung", "MS/NS": "Umspannung MS/NS", MS: "Mittelspannung" };
+    return b.map((z) => `<table><tr><th scope="row">${namen[z.e]}${z.j ? ` (${z.j}${z.p === "vorläufig" ? ", vorläufig" : ""})` : ""}${z.f ? `, über ${z.f} kW` : ""}</th><td>${zahl(z.w)} ${z.ei === "EUR/kVA" ? "€/kVA" : "€/kW"}${z.s === "netto" ? " netto" : ""}</td></tr></table>`).join("") + quelleHtml(b[0]);
+  }
+  function preiseHtml(b) {
+    const p = PREISE[BETREIBER.indexOf(b)];
+    if (!p) return "";
+    if (!pinned) {
+      const jahr = p.n && (p.n["2026"] ? "2026" : p.n["2027"] ? "2027" : null);
+      const ns = jahr && p.n[jahr];
+      const slp = ns && ns.w["NS ohne LM"];
+      const ms = ns && ns.w["MS >=2500h"];
+      const bkz = bkzMittelspannung(p);
+      const teile = [slp ? `NS ${jahr}: ${zahl(slp[2])} ct/kWh` : "", ms ? `MS ${jahr}: ${zahl(ms[1])} €/kW·a` : "", bkz !== null ? `BKZ MS: ${zahl(bkz)} €/kW` : ""].filter(Boolean);
+      return `<div class="preise">${teile.length ? teile.join(" · ") : "Keine Preise erfasst"}</div>`;
+    }
+    return `<div class="preise">
+      <h3>Netzentgelte 2026</h3>${netzentgeltHtml(p, "2026")}
+      <details><summary>Netzentgelte 2027 (vorläufig)</summary>${netzentgeltHtml(p, "2027")}</details>
+      <h3>Baukostenzuschuss</h3>${bkzHtml(p)}
+      <div class="quelle">Ohne Umlagen, Konzessionsabgabe und Umsatzsteuer, sofern das Preisblatt nichts anderes sagt.</div>
+    </div>`;
+  }
+
   function betreiberHtml(b) {
     let contact = "";
     if (b.portal) contact = link(b.portal, "Netzanschlussportal öffnen");
@@ -187,7 +265,8 @@
         ${row("Netzanschluss", contact)}
         ${row("E-Mail", mail)}
         ${row("Telefon", b.tel ? esc(b.tel) : "")}
-      </dl>`;
+      </dl>
+      ${preiseHtml(b)}`;
   }
 
   function zeigeKarte(inhalt) {
@@ -268,10 +347,43 @@
   }
   map.on("zoomend", updateLabels);
 
-  document.getElementById("opacity").addEventListener("input", (e) => {
+  const deckkraft = document.getElementById("opacity");
+  deckkraft.addEventListener("input", (e) => {
     opacity = e.target.value / 100;
     netz.setStyle(style);
   });
+
+  const legende = document.getElementById("legende");
+  // Klassen zu gleichen Teilen, damit einzelne Ausreisser nicht die ganze Skala belegen
+  function setzeFaerbung(wahl) {
+    if (!wahl) {
+      faerbung = null;
+      legende.hidden = true;
+      netz.setStyle(style);
+      return;
+    }
+    const [name, jahr] = wahl.split(":");
+    const mass = MASS[name];
+    const werte = new Map();
+    GEBIETE.features.forEach((f) => {
+      const p = PREISE[f.properties.b];
+      const w = p ? mass.wert(p, jahr) : null;
+      if (w !== null && w !== undefined) werte.set(f.properties.b, w);
+    });
+    const sortiert = [...werte.values()].sort((a, c) => a - c);
+    const grenzen = FARBSTUFEN.map((_, i) => sortiert[Math.min(sortiert.length - 1, Math.ceil(((i + 1) * sortiert.length) / FARBSTUFEN.length) - 1)]);
+    faerbung = { werte, grenzen };
+    // Die helle Skala braucht mehr Deckkraft als die Betreiberfarben, sonst scheint die Karte durch
+    if (opacity < 0.85) { opacity = 0.85; deckkraft.value = 85; }
+    netz.setStyle(style);
+    const unten = sortiert.length ? sortiert[0] : 0;
+    const felder = FARBSTUFEN.map((c, i) => `<div><div class="feld" style="background:${c}"></div><div class="wert">${sortiert.length ? `bis ${zahl(grenzen[i], mass.stellen)}` : "–"}</div></div>`).join("");
+    legende.innerHTML = `<strong>${mass.titel(jahr)}</strong><span class="einheit">${mass.einheit}. Werte von ${zahl(unten, mass.stellen)} bis ${zahl(sortiert[sortiert.length - 1] || 0, mass.stellen)}.</span>
+      <div class="skala">${felder}<div><div class="feld" style="background:${OHNE_WERT}"></div><div class="wert">kein Wert</div></div></div>
+      <div class="wert">${werte.size} von ${GEBIETE.features.length} Gebieten haben einen Wert. Grau heißt: nicht erfasst, nicht geschätzt.</div>`;
+    legende.hidden = false;
+  }
+  document.getElementById("faerbung").addEventListener("change", (e) => setzeFaerbung(e.target.value));
   const layersPanel = document.getElementById("layers");
   const toggleBtn = document.getElementById("toggle");
   toggleBtn.addEventListener("click", () => {
@@ -573,5 +685,5 @@
 
   document.getElementById("stand").textContent = META.stand;
   document.getElementById("status").textContent = `${GEBIETE.features.length} Betreiber · ${GEMEINDEN.features.length.toLocaleString("de-DE")} Gemeinden`;
-  window.__karte = { map, netz, show, findeGemeinde, ausgewaehlt: () => highlightB, strichStaerke };
+  window.__karte = { map, netz, show, findeGemeinde, ausgewaehlt: () => highlightB, strichStaerke, setzeFaerbung };
 })();
